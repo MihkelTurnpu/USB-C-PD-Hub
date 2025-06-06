@@ -21,21 +21,21 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include "stdio.h"
-#include "stm32g4xx_hal.h"
-#include <stdbool.h>
-#include "TPS_low_reg_bin.h"
-#include <string.h>
-#include <stdarg.h>
-#include "pd_handler.h"
-#include <stdint.h>
+#include "stdio.h"              // For printf                           
+#include "stm32g4xx_hal.h"      // For HAL functions                    
+#include <stdbool.h>            // For boolean type         
+#include "TPS_low_reg_bin.h"    // For TPS26750 patch data       
+#include <string.h>             // For memcpy 
+#include <stdarg.h>             // For va_list, va_start, va_end
+#include "pd_handler.h"         // For PD handling functions
+#include <stdint.h>             // For uint8_t, uint32_t types
 
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-extern const char tps25750x_lowRegion_i2c_array[];
-extern int gSizeLowRegionArray;
+extern const char tps25750x_lowRegion_i2c_array[];  // TPS26750 patch data
+extern int gSizeLowRegionArray;                     // Size of patch data array
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -76,7 +76,7 @@ static void MX_ADC5_Init(void);
 /* USER CODE BEGIN PFP */
 
 
-//swo initsialiseerimine
+//swo initialization
 void SWO_Init(void)
 {
   CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
@@ -84,7 +84,8 @@ void SWO_Init(void)
   ITM->TCR  = ITM_TCR_ITMENA_Msk | ITM_TCR_TSENA_Msk | ITM_TCR_SYNCENA_Msk | ITM_TCR_TraceBusID_Msk;
   ITM->TER  = 1;
 }
-//swo printf ühendus
+
+//swo printf function
 int _write(int file, char *ptr, int len) {
     for (int i = 0; i < len; i++) {
         ITM_SendChar(*ptr++);
@@ -92,7 +93,7 @@ int _write(int file, char *ptr, int len) {
     return len;
 }
 
-// I2C aadresside kontrollimine
+// I2C3 scan function
 void I2C3_Scan(void)
 {
     printf("Scanning I2C3...\r\n");
@@ -110,18 +111,15 @@ void I2C3_Scan(void)
     printf("Scan complete.\r\n");
 }
 
-
-
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+// Print TX Source PDOs from register 0x32
+// shows what PDOs are available for the sink to choose from
 void print_tx_source_pdos(uint8_t pdAddr)
 {
     uint8_t dev = pdAddr << 1;
-    // We need 23 data bytes to cover up through PDO5 (5×4 = 20 bytes)
-    // plus the 1 control byte for Number Valid PDOs, so 21 bytes of payload
-    // but to align to 4-byte boundaries we’ll just grab 23.
     uint8_t  cmd = 23;
     uint8_t  raw[1 + 23]; // [0]=length prefix, [1..23]=payload
     uint8_t* d = &raw[1]; // d[0]..d[22]
@@ -151,11 +149,13 @@ void print_tx_source_pdos(uint8_t pdAddr)
     }
 }
 
-
+/* ---------------------------------------------------------------------------*/
+// Print active PDO contract (48 bits) from register 0x34
+// for debugging purposes
 void print_active_pdo_contract(uint8_t pdAddr)
 {
     uint8_t  dev = pdAddr << 1;
-    uint8_t  cmd = 6;          // we want 6 data bytes (bits 47:0)
+    uint8_t  cmd = 6;          // 6 data bytes (bits 47:0)
     uint8_t  raw[7];           // [0]=length prefix, [1..6]=data bytes
     uint64_t reg = 0;
 
@@ -171,27 +171,22 @@ void print_active_pdo_contract(uint8_t pdAddr)
     }
 
     // 4) extract fields
-    uint16_t first_pdo_ctrl = (reg >> 32) & 0x03FF;       // bits 41:32
+    uint16_t first_pdo_ctrl = (reg >> 32) & 0x03FF;         // bits 41:32
     uint32_t active_pdo     = (uint32_t)(reg & 0xFFFFFFFF); // bits 31:0
 
     // 5) print
     printf("Active PDO Contract @0x34:\n");
-    printf("  First PDO Control Bits = 0x%03X  (%u)\n",
-           first_pdo_ctrl, first_pdo_ctrl);
-    printf("  Active PDO             = 0x%08lX\n",
-           (unsigned long)active_pdo);
+    printf("  First PDO Control Bits = 0x%03X  (%u)\n", first_pdo_ctrl, first_pdo_ctrl);
+    printf("  Active PDO = 0x%08lX\n",(unsigned long)active_pdo);
 }
-//---------------------------------------------------------------------------------------------------------------------------------------------------------------
-
+/* ---------------------------------------------------------------------------*/
+//for masking interrupts in INT_MASK1 register (11 bytes - prefix)
+//used for debugging purposes
 void TPS26750_MaskInterrupts(uint8_t pdAddr)
 {
     uint8_t devAddr = pdAddr << 1;
 
-    // INT_MASK1 is 88 bits (11 bytes) long; we must prefix writes with the byte-count (11).
-    // data[0] = byte-count = 11
-    // data[1] = mask byte for bits 7..0   → only bit 3 set
-    // data[2] = mask byte for bits 15..8  → only bit 13→(13-8=5) set
-    // data[6] = mask byte for bits 47..40 → only bit 42→(42-40=2) set
+    // INT_MASK1 is 88 bits (11 bytes) long + 1 prefix byte;
     uint8_t data[12] = { 0 };
     data[0] = 11;                // total mask-bytes to follow
     data[1] = (1U << 3);         // enable interrupt bit 3  (Plug Insert/Removal)
@@ -201,7 +196,8 @@ void TPS26750_MaskInterrupts(uint8_t pdAddr)
     // Write INT_MASK1 (offset = 0x16)
     HAL_I2C_Mem_Write(&hi2c3, devAddr,0x16,I2C_MEMADD_SIZE_8BIT,data,sizeof(data),100);
 }
-//---------------------------------------------------------------------------------------------------------------------------------------------------------------
+/* ---------------------------------------------------------------------------*/
+// Clear all bits in INT_EVENT1 register (11 bytes - prefix)
 void clear_all_INT_EVENT1_bits(uint8_t i2c_addr)
 {
     uint8_t buf[12];
@@ -216,7 +212,9 @@ void clear_all_INT_EVENT1_bits(uint8_t i2c_addr)
 	printf("Cleared all INT_EVENT1 bits for device 0x%02X\n", i2c_addr);
 
 }
-//---------------------------------------------------------------------------------------------------------------------------------------------------------------
+/* ---------------------------------------------------------------------------*/
+// Print raw bits of INT_EVENT1 register (11 bytes - prefix)
+//used for debugging purposes
 void print_INT_EVENT1_raw_bits(const uint8_t bits_with_prefix[11])
 {
     printf("INT_EVENT1 bits: ");
@@ -229,7 +227,9 @@ void print_INT_EVENT1_raw_bits(const uint8_t bits_with_prefix[11])
     printf("\n");
 }
 
-//---------------------------------------------------------------------------------------------------------------------------------------------------------------
+/* ---------------------------------------------------------------------------*/
+// Interrupt handler for USB events
+// This function is called when an interrupt occurs on GPIO pins 10 or 11
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
 
@@ -326,7 +326,7 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
     }
 }
 
-//---------------------------------------------------------------------------------------------------------------------------------------------------------------
+/* ---------------------------------------------------------------------------*/
 void mask_all_interrupts(uint8_t i2c_addr)
 {
 	 uint8_t buf[5];
@@ -348,7 +348,7 @@ void mask_all_interrupts(uint8_t i2c_addr)
 
 	    //printf("INT_MASK1 for 0x%02X: %02X %02X %02X %02X\n", i2c_addr, raw[1], raw[2], raw[3], raw[4]);  // Skip prefix
 	}
-//---------------------------------------------------------------------------------------------------------------------------------------------------------------
+/* ---------------------------------------------------------------------------*/
 void unmask_all_interrupts(uint8_t i2c_addr)
 {
 	 uint8_t buf[5];
@@ -370,7 +370,7 @@ void unmask_all_interrupts(uint8_t i2c_addr)
 
 	    //printf("INT_MASK1 for 0x%02X: %02X %02X %02X %02X\n",i2c_addr, raw[1], raw[2], raw[3], raw[4]);  // Skip prefix
 	}
-//---------------------------------------------------------------------------------------------------------------------------------------------------------------
+/* ---------------------------------------------------------------------------*/
 
 void Read_TPS_Mode(uint8_t address)
 {
@@ -391,7 +391,7 @@ void Read_TPS_Mode(uint8_t address)
     }
 }
 
-//---------------------------------------------------------------------------------------------------------------------------------------------------------------
+/* ---------------------------------------------------------------------------*/
 
 bool Upload_TPS26750_Patch(I2C_HandleTypeDef *hi2c, uint8_t dev7bitAddr, const uint8_t *patch_data, uint32_t patch_size)
 {
@@ -514,7 +514,7 @@ bool Upload_TPS26750_Patch(I2C_HandleTypeDef *hi2c, uint8_t dev7bitAddr, const u
     return true;
 }
 
-//---------------------------------------------------------------------------------------------------------------------------------------------------------------
+/* ---------------------------------------------------------------------------*/
 
 /*
 //TPS55288 fault interrupt
@@ -561,7 +561,7 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 }
 */
 
-//----------------------------------------------------------------------------------------------------------------
+/* ---------------------------------------------------------------------------*/
 
 void read_and_print_INT_EVENT1(uint8_t i2c_addr)
 {
@@ -603,7 +603,7 @@ void read_and_print_INT_EVENT1(uint8_t i2c_addr)
     }
     printf("\n");
 }
-//-------------------------------------------------------------------------------------------------------------
+/* ---------------------------------------------------------------------------*/
 
 
 /* USER CODE END 0 */
@@ -677,7 +677,7 @@ int main(void)
    while (1)
   {
     /* USER CODE END WHILE */
-HAL_Delay(1000);
+    HAL_Delay(1000);
     /* USER CODE BEGIN 3 */
   }
   /* USER CODE END 3 */
