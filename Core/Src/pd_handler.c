@@ -42,61 +42,27 @@ static void apply_voltage(uint8_t pdAddr, uint8_t tpsAddr)
         //pdo_number = 1;
         return;
     }
-
+    /* ---------------------------------------------------------------------------*/
+    //TPS55288 configutration
     // 6) Look up target voltage and program the TPS
-    uint32_t target_voltage = pdo_voltages[pdo_number - 2];
+    uint32_t target_voltage = pdo_voltages[pdo_number - 2]; //numbers in array start counting from 0 (0, 1, 2, 3) so PDO #2 is 2-2=0 (8300mv -> 9V)
     printf("Applying PDO #%u → %lu mV on TPS 0x%02X\n", pdo_number, target_voltage, tpsAddr);
 
-/*
-    uint8_t buf[1] = {4};
-    uint8_t raw[5];
-    uint32_t rdo;
-    uint8_t pdo_number;
-    uint8_t devAddr = pdAddr << 1;
-
-    // Read ACTIVE_RDO_CONTRACT (0x35)
-    HAL_I2C_Mem_Write(&hi2c3, devAddr, 0x35, I2C_MEMADD_SIZE_8BIT, buf, 1, 100);
-    HAL_I2C_Mem_Read(&hi2c3, devAddr, 0x35, I2C_MEMADD_SIZE_8BIT, raw, 5, 100);
-    // Parse RDO and extract PDO number from bits 31:28
-    rdo = raw[1] | (raw[2] << 8) | (raw[3] << 16) | (raw[4] << 24);
-    pdo_number = (raw[4] >> 4) & 0x0F;
-    printf("ACTIVE_RDO_CONTRACT (0x35): 0x%08lX\n", rdo);
-
-    // Validate PDO range (1–4)
-    if (pdo_number < 1 || pdo_number > 4) {
-        printf("PDO #%u is out of range — Output 5V\n", pdo_number);
-        pdo_number = 1;
-    }
-    else
-    {
-    	 printf("PDO #%u\n", pdo_number);
-    }
-
-    uint32_t target_voltage = pdo_voltages[pdo_number - 1];
-
-    // Skip if voltage is already applied
-    //if (target_voltage == last_voltage_applied) {
-        //printf("PDO #%u (%lu mV) is already applied — no action needed\n", pdo_number, target_voltage);
-    //}
-
-    //last_voltage_applied = target_voltage;
-    printf("Applying PDO #%u -- %lu mV -- TPS 0x%02X\n", pdo_number, target_voltage, tpsAddr);
-*/
-    // Convert to DAC code
-    uint16_t ref_code = target_voltage / 20;
-    if (ref_code > 0x3FF) ref_code = 0x3FF;
+    // Convert to DAC code for TPS55288
+    uint16_t ref_code = target_voltage / 20; // 20 mV step
+    if (ref_code > 0x3FF) ref_code = 0x3FF; //limiting output to 20V
     uint8_t dac_buf[2] = {ref_code & 0xFF, (ref_code >> 8) & 0x03};
 
-    // Write REF
+    // Write REF to TPS55288
     HAL_I2C_Mem_Write(&hi2c3, tpsAddr << 1, 0x00, I2C_MEMADD_SIZE_8BIT, dac_buf, 2, 100);
 
-    // Enable OE
+    // Enable OE bit (bit 7) in REG06
     uint8_t reg06;
     HAL_I2C_Mem_Read(&hi2c3, tpsAddr << 1, 0x06, I2C_MEMADD_SIZE_8BIT, &reg06, 1, 100);
     reg06 |= 0x80;
     HAL_I2C_Mem_Write(&hi2c3, tpsAddr << 1, 0x06, I2C_MEMADD_SIZE_8BIT, &reg06, 1, 100);
 }
-
+/* ---------------------------------------------------------------------------*/
 void handle_pd1_event(void) {
     apply_voltage(0x21, 0x75);
 }
